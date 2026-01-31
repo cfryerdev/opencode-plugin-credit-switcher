@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "primaryModel": "azure-openai/<deployment-name>",
+  "fallbackModel": "llama.cpp/qwen3-coder:a3b",
+  "licensing": {
+    "requireProviders": ["azure-openai", "github-copilot"]
+  },
+  "restore": {
+    "enabled": true,
+    "intervalHours": 24
+  },
+  "fallback": {
+    "onStatus": [402, 429],
+    "onErrorCodes": ["CREDITS_EXHAUSTED", "ACCOUNT_LIMIT_REACHED", "QUOTA_EXCEEDED"],
+    "onMessageMatches": ["credit", "quota", "insufficient", "exceeded", "payment", "limit"]
+  },
+  "notifications": {
+    "toastOnFallback": true,
+    "toastOnRestore": true,
+    "confirmOnFallback": false
+  }
+}

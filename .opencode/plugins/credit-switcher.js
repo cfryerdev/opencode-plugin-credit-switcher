@@ -27,21 +27,26 @@ const DEFAULT_CONFIG = {
 
 const SERVICE_NAME = "credit-switcher"
 
+// Plugin entrypoint: wires configuration, state, and event handlers.
 export const CreditSwitcher = async ({ client, directory, worktree }) => {
   const state = {
     config: null,
     configPath: null,
     statePath: null,
     stateData: null,
+    // Prevents retry loops per session.
     attemptedSessions: new Set(),
+    // Interval timer for daily restore checks.
     restoreTimer: null,
   }
 
+  // Prefer explicit env var, then repo-local, then global config.
   const configPaths = getConfigPaths(directory, worktree)
   const initial = await loadConfig(configPaths, client)
   state.config = initial.config
   state.configPath = initial.path
 
+  // State lives alongside the config so multi-repo installs stay isolated.
   state.statePath = getStatePath(state.configPath, directory, worktree)
   state.stateData = await loadState(state.statePath, client)
 
@@ -55,12 +60,15 @@ export const CreditSwitcher = async ({ client, directory, worktree }) => {
 
   return {
     event: async ({ event }) => {
+      // Only respond to provider errors for a session.
       if (!event || event.type !== "session.error") return
 
+      // Plugin can be globally disabled via config.
       if (!state.config || !state.config.enabled) return
 
       const config = state.config
 
+      // Only act on credit exhaustion errors.
       if (!isCreditExhausted(event, config)) return
 
       const sessionId = extractSessionId(event)
@@ -71,6 +79,7 @@ export const CreditSwitcher = async ({ client, directory, worktree }) => {
 
       if (state.attemptedSessions.has(sessionId)) return
 
+      // Enforce licensing requirements (e.g., both AI Foundry + Copilot).
       if (!(await hasRequiredProviders(client, config))) {
         await safeLog(client, "warn", "Required providers not configured; skipping fallback", {
           required: config.licensing?.requireProviders || [],
@@ -78,6 +87,7 @@ export const CreditSwitcher = async ({ client, directory, worktree }) => {
         return
       }
 
+      // Parse configured models into provider/model IDs.
       const primaryModel = parseModel(config.primaryModel)
       const fallbackModel = parseModel(config.fallbackModel)
 
@@ -89,17 +99,20 @@ export const CreditSwitcher = async ({ client, directory, worktree }) => {
         return
       }
 
+      // Only fallback when the session is currently on the primary provider.
       const sessionModel = await getSessionModel(client, sessionId)
       if (primaryModel && sessionModel && sessionModel.providerId) {
         if (sessionModel.providerId !== primaryModel.providerId) return
       }
 
+      // We replay the last user prompt to avoid dropping the request.
       const lastUserMessage = await getLastUserMessage(client, sessionId)
       if (!lastUserMessage) {
         await safeLog(client, "warn", "No user message to retry", { sessionId })
         return
       }
 
+      // Optionally ask the user before retrying on fallback.
       const shouldRetry = await confirmFallback({
         client,
         config,
@@ -121,6 +134,7 @@ export const CreditSwitcher = async ({ client, directory, worktree }) => {
       })
 
       if (state.stateData) {
+        // Persist the original model and exhaustion time for restore checks.
         const now = Date.now()
         state.stateData.sessions[sessionId] = {
           exhaustedAt: now,
@@ -171,6 +185,7 @@ function getConfigPaths(directory, worktree) {
   return paths
 }
 
+// State file is kept alongside config to avoid cross-project collisions.
 function getStatePath(configPath, directory, worktree) {
   if (configPath) return path.join(path.dirname(configPath), "credit-switcher.state.json")
   if (worktree) return path.join(worktree, ".opencode", "credit-switcher.state.json")
@@ -483,6 +498,7 @@ function scheduleRestoreCheck({ state, client }) {
 }
 
 async function runRestoreCheck({ state, client, intervalMs }) {
+  // Runs at most once per interval to avoid spam in long-lived sessions.
   if (!state.config?.restore?.enabled) return
   if (!state.stateData) return
 
@@ -495,6 +511,7 @@ async function runRestoreCheck({ state, client, intervalMs }) {
   state.stateData.lastCheckAt = now
   const sessions = state.stateData.sessions || {}
 
+  // Attempt to restore sessions that have been on fallback long enough.
   for (const [sessionId, record] of Object.entries(sessions)) {
     const exhaustedAt = Number(record?.exhaustedAt || 0)
     if (!exhaustedAt || now - exhaustedAt < threshold) continue

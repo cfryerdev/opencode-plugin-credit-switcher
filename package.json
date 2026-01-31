@@ -7,18 +7,5 @@
     ".": "./index.js"
   },
   "description": "OpenCode plugin that falls back to a self-hosted model when credits are exhausted",
-  "keywords": [
-    "opencode",
-    "opencode-plugin",
-    "plugin",
-    "credits",
-    "fallback",
-    "routing"
-  ],
-  "license": "UNLICENSED",
-  "files": [
-    "index.js",
-    "README.md",
-    ".opencode/plugins/credit-switcher.js"
-  ]
+  "license": "MIT"
 }

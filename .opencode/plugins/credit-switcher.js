@@ -42,12 +42,14 @@ export const CreditSwitcher = async ({ client, directory, worktree }) => {
 
   // Prefer explicit env var, then repo-local, then global config.
   const configPaths = getConfigPaths(directory, worktree)
+  await ensureConfigFile(configPaths, client)
   const initial = await loadConfig(configPaths, client)
   state.config = initial.config
   state.configPath = initial.path
 
   // State lives alongside the config so multi-repo installs stay isolated.
   state.statePath = getStatePath(state.configPath, directory, worktree)
+  await ensureStateFile(state.statePath, client)
   state.stateData = await loadState(state.statePath, client)
 
   if (state.config?.restore?.enabled) {
@@ -212,6 +214,35 @@ async function loadConfig(paths, client) {
   return { config: { enabled: false }, path: null }
 }
 
+async function ensureConfigFile(paths, client) {
+  let hasConfig = false
+  for (const path of paths) {
+    if (!path) continue
+    try {
+      const file = Bun.file(path)
+      if (await file.exists()) {
+        hasConfig = true
+        break
+      }
+    } catch {
+      continue
+    }
+  }
+
+  if (hasConfig) return
+
+  const target = paths.find(Boolean)
+  if (!target) return
+
+  try {
+    await Bun.mkdir(path.dirname(target), { recursive: true })
+    await Bun.write(target, JSON.stringify(DEFAULT_CONFIG, null, 2))
+    await safeLog(client, "info", "Created default config", { path: target })
+  } catch (error) {
+    await safeLog(client, "error", "Failed to create config", { path: target, error: String(error) })
+  }
+}
+
 async function loadState(statePath, client) {
   const empty = { sessions: {}, lastCheckAt: 0 }
   if (!statePath) return empty
@@ -224,8 +255,24 @@ async function loadState(statePath, client) {
     return { ...empty, ...raw, sessions: raw.sessions || {} }
   } catch (error) {
     await safeLog(client, "error", "Failed to load state", { path: statePath, error: String(error) })
-    return empty
+  return empty
+}
+
+async function ensureStateFile(statePath, client) {
+  if (!statePath) return
+  try {
+    const file = Bun.file(statePath)
+    if (await file.exists()) return
+    await Bun.mkdir(path.dirname(statePath), { recursive: true })
+    await Bun.write(statePath, JSON.stringify({ sessions: {}, lastCheckAt: 0 }, null, 2))
+    await safeLog(client, "info", "Created state file", { path: statePath })
+  } catch (error) {
+    await safeLog(client, "error", "Failed to create state file", {
+      path: statePath,
+      error: String(error),
+    })
   }
+}
 }
 
 async function saveState(statePath, stateData, client) {
